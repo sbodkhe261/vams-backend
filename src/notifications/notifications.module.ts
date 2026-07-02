@@ -5,11 +5,13 @@ import { NotificationsProcessor } from './notifications.processor';
 
 @Module({
   imports: [
-    // Configure Redis for BullMQ
     BullModule.forRoot({
       connection: {
-        host: process.env.REDIS_HOST || 'localhost',
+        host: process.env.REDIS_HOST,
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
+        username: process.env.REDIS_USERNAME || 'default',
+        password: process.env.REDIS_PASSWORD,
+        tls: {},
       },
     }),
     BullModule.registerQueue({
@@ -19,4 +21,4 @@ import { NotificationsProcessor } from './notifications.processor';
   providers: [NotificationsService, NotificationsProcessor],
   exports: [NotificationsService, BullModule],
 })
-export class NotificationsModule {}
+export class NotificationsModule { }
