@@ -115,7 +115,7 @@ export class AuthService {
       resolvedRole = 'WORKER';
     }
 
-    return this.prisma.user.create({
+    const user = await this.prisma.user.create({
       data: {
         name: data.name,
         email: data.email,
@@ -125,6 +125,9 @@ export class AuthService {
         isActive: true, // Activated by default to support immediate login
       },
     });
+
+    const { passwordHash, ...result } = user;
+    return result;
   }
 
   async updateDeviceToken(userId: string, token: string) {

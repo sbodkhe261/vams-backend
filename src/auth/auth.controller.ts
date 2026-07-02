@@ -3,6 +3,8 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { RegisterDto, RegisterResponseDto } from './dto/register.dto';
+import { UpdateDeviceTokenDto, UpdateDeviceTokenResponseDto } from './dto/update-device-token.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -20,15 +22,20 @@ export class AuthController {
 
   @Post('register')
   @ApiOperation({ summary: 'Register a new user' })
-  register(@Body() data: any) {
-    return this.authService.register(data);
+  @ApiResponse({ status: 201, description: 'User successfully registered', type: RegisterResponseDto })
+  @ApiResponse({ status: 400, description: 'Validation failed or missing fields' })
+  @ApiResponse({ status: 409, description: 'Conflict: Email already exists' })
+  register(@Body() registerDto: RegisterDto) {
+    return this.authService.register(registerDto);
   }
 
   @Post('device-token')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update/register user FCM device token' })
-  async updateDeviceToken(@Request() req: any, @Body() body: { token: string }) {
-    return this.authService.updateDeviceToken(req.user.id, body.token);
+  @ApiResponse({ status: 200, description: 'Device token successfully updated', type: UpdateDeviceTokenResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async updateDeviceToken(@Request() req: any, @Body() updateDeviceTokenDto: UpdateDeviceTokenDto) {
+    return this.authService.updateDeviceToken(req.user.id, updateDeviceTokenDto.token);
   }
 }
