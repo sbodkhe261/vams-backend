@@ -123,10 +123,25 @@ export class NotificationsProcessor extends WorkerHost {
         },
       });
 
-      if (notification?.alert) {
+      if (notification) {
         alertId = notification.alertId || '';
-        severity = notification.alert.severity || 'INFO';
-        soundProfile = notification.alert.defect?.soundProfile || 'ALERT';
+        const titleUpper = notification.title.toUpperCase();
+        
+        // Non-emergency lifecycle events should not sound the active sirens/alarms
+        const isLifecycleEvent = titleUpper.includes('RESOLVED') || 
+                                 titleUpper.includes('ASSIGN') || 
+                                 titleUpper.includes('HANDOVER') || 
+                                 titleUpper.includes('TAKEOVER') || 
+                                 titleUpper.includes('REOPEN') || 
+                                 titleUpper.includes('COMMENT');
+
+        if (isLifecycleEvent) {
+          severity = 'INFO';
+          soundProfile = 'INFO';
+        } else if (notification.alert) {
+          severity = notification.alert.severity || 'INFO';
+          soundProfile = notification.alert.defect?.soundProfile || 'ALERT';
+        }
       }
     } catch (dbErr) {
       console.error('[sendPush] Error querying database for notification metadata:', dbErr);
