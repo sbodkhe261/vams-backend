@@ -1,0 +1,137 @@
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../prisma/prisma.service';
+import { LoginDto } from './dto/login.dto';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
+
+  async login(loginDto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: loginDto.email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // In production, use bcrypt/argon2 hashing comparison
+    const passwordIsValid = user.passwordHash === loginDto.password; 
+    if (!passwordIsValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const payload = { sub: user.id, email: user.email, role: user.role, companyId: user.companyId };
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        companyId: user.companyId,
+      },
+    };
+  }
+
+  async register(data: any) {
+    const email = data.email?.trim();
+    if (!email) {
+      throw new Error('Email is required');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+    });
+    if (existingUser) {
+      throw new ConflictException(`User with this email is already registered (Email: ${email}, Role: ${existingUser.role})`);
+    }
+
+    const companyIdOrName = data.companyId?.trim();
+    if (!companyIdOrName) {
+      throw new Error('Company ID or name is required');
+    }
+
+    // Check if the input is a valid UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(companyIdOrName);
+    
+    let company = null;
+    if (isUuid) {
+      company = await this.prisma.company.findUnique({
+        where: { id: companyIdOrName },
+      });
+    }
+
+    if (!company) {
+      company = await this.prisma.company.findUnique({
+        where: { name: companyIdOrName },
+      });
+    }
+
+    // If company does not exist, create it automatically along with default settings
+    if (!company) {
+      company = await this.prisma.$transaction(async (tx) => {
+        const newComp = await tx.company.create({
+          data: { name: companyIdOrName },
+        });
+
+        await tx.companySettings.create({
+          data: {
+            companyId: newComp.id,
+            soundInfo: 'soft_bell.mp3',
+            soundWarning: 'chime.mp3',
+            soundCritical: 'alarm.mp3',
+            soundEmergency: 'siren.mp3',
+          },
+        });
+
+        return newComp;
+      });
+    }
+
+    const validRoles = [
+      'SUPER_ADMIN',
+      'COMPANY_ADMIN',
+      'FACTORY_MANAGER',
+      'SUPERVISOR',
+      'WORKER',
+      'QUALITY_INSPECTOR',
+      'SERVICE_ENGINEER',
+      'DEALER',
+      'VEHICLE_OWNER',
+      'READ_ONLY_USER',
+    ];
+    
+    let resolvedRole = data.role;
+    if (resolvedRole === 'MANAGER') {
+      resolvedRole = 'FACTORY_MANAGER';
+    }
+    if (!validRoles.includes(resolvedRole)) {
+      resolvedRole = 'WORKER';
+    }
+
+    return this.prisma.user.create({
+      data: {
+        name: data.name,
+        email: data.email,
+        passwordHash: data.password,
+        role: resolvedRole as any,
+        companyId: company.id,
+        isActive: true, // Activated by default to support immediate login
+      },
+    });
+  }
+
+  async updateDeviceToken(userId: string, token: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { fcmToken: token },
+      select: { id: true, email: true, name: true, fcmToken: true },
+    });
+  }
+}

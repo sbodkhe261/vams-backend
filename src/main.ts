@@ -1,0 +1,46 @@
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Serve static files from 'public' directory
+  app.useStaticAssets(join(process.cwd(), 'public'));
+
+  // Set global API prefix
+  app.setGlobalPrefix('api/v1');
+
+  // Enforce global validation rules
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
+
+  // Configure Swagger Documentation
+  const config = new DocumentBuilder()
+    .setTitle('VAMS Backend Engine')
+    .setDescription('Multi-Tenant Vehicle Alert Management System API specifications')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api/docs', app, document);
+
+  const port = process.env.PORT || 3000;
+
+  // IMPORTANT: Listen on all network interfaces
+  await app.listen(port, '0.0.0.0');
+
+  console.log(`VAMS Backend running on port ${port}`);
+  console.log(`Swagger docs available at http://localhost:${port}/api/docs`);
+}
+
+bootstrap();

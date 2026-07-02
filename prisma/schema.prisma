@@ -1,0 +1,344 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// System Roles supporting RBAC
+enum UserRole {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  FACTORY_MANAGER
+  SUPERVISOR
+  WORKER
+  QUALITY_INSPECTOR
+  SERVICE_ENGINEER
+  DEALER
+  VEHICLE_OWNER
+  READ_ONLY_USER
+}
+
+/// Alert Severity levels
+enum Severity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+  EMERGENCY
+}
+
+/// Alert Lifecycle statuses
+enum AlertStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  REOPENED
+}
+
+/// Channels for message delivery
+enum NotificationChannel {
+  IN_APP
+  PUSH
+  EMAIL
+  SMS
+}
+
+/// Companies table to store tenants
+model Company {
+  id               String            @id @default(uuid())
+  name             String            @unique
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  users            User[]
+  defects          DefectMaster[]
+  alerts           Alert[]
+  alertRules       AlertRule[]
+  escalationRules  EscalationRule[]
+  notifications    Notification[]
+  settings         CompanySettings?
+
+  @@map("companies")
+}
+
+/// Tenant configuration (e.g. customized sound maps, notification routing overrides)
+model CompanySettings {
+  id                 String   @id @default(uuid())
+  companyId          String   @unique
+  company            Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  soundInfo          String   @default("soft_bell.wav")
+  soundWarning       String   @default("chime.wav")
+  soundCritical      String   @default("alarm.wav")
+  soundEmergency     String   @default("siren.wav")
+  escalationGraceMin Int      @default(1440) // Default grace period in minutes
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("company_settings")
+}
+
+/// Users table with multi-tenant company association and RBAC Roles
+model User {
+  id                 String                  @id @default(uuid())
+  email              String                  @unique
+  passwordHash       String
+  name               String
+  role               UserRole
+  companyId          String
+  company            Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  isActive           Boolean                 @default(true)
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  fcmToken           String?
+  
+  assignedAlerts     Alert[]                 @relation("AssignedUser")
+  createdAlerts      Alert[]                 @relation("CreatedByUser")
+  resolutions        Resolution[]
+  timelineEvents     DefectResolutionTimeline[]
+  comments           ResolutionComment[]
+  notifications      Notification[]
+  preferences        NotificationPreference[]
+  activityLogs       UserActivityLog[]
+  assignedHistories  AlertAssignmentHistory[] @relation("AssignedToUser")
+  actionedHistories  AlertAssignmentHistory[] @relation("AssignedByUser")
+
+  @@index([companyId])
+  @@index([role])
+  @@map("users")
+}
+
+/// Audit trail of user activities
+model UserActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  ipAddress String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("user_activity_logs")
+}
+
+/// Defect Master listing types of defects
+model DefectMaster {
+  id                   String       @id @default(uuid())
+  name                 String
+  category             String
+  severity             Severity
+  defaultAssigneeRole  UserRole     @default(WORKER)
+  ownerVisible         Boolean      @default(true)
+  soundProfile         String       @default("INFO") // References sound config names
+  active               Boolean      @default(true)
+  companyId            String
+  company              Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  alerts               Alert[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@map("defect_masters")
+}
+
+/// Alert Rules engine table
+model AlertRule {
+  id             String                @id @default(uuid())
+  companyId      String
+  company        Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  severity       Severity
+  rolesToNotify  UserRole[]
+  channels       NotificationChannel[]
+  isActive       Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([companyId, severity])
+  @@index([companyId])
+  @@map("company_alert_rules")
+}
+
+/// Automatic Escalation Engine config
+model EscalationRule {
+  id             String   @id @default(uuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  severity       Severity
+  escalateAfterDays Int
+  escalateToRole UserRole
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([companyId, severity, escalateAfterDays])
+  @@index([companyId])
+  @@map("escalation_rules")
+}
+
+/// Live alerts generated by inspection/fleet systems
+model Alert {
+  id                     String                     @id @default(uuid())
+  vin                    String
+  companyId              String
+  company                Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  defectId               String
+  defect                 DefectMaster               @relation(fields: [defectId], references: [id])
+  severity               Severity
+  status                 AlertStatus                @default(OPEN)
+  assignedToUserId       String?
+  assignedToUser         User?                      @relation("AssignedUser", fields: [assignedToUserId], references: [id])
+  assignedToRole         UserRole?
+  assignedToDepartment   String?
+  assignedToTeam         String?
+  createdById            String?
+  createdBy              User?                      @relation("CreatedByUser", fields: [createdById], references: [id])
+  escalationStep         Int                        @default(0) // Tracks current escalation stage
+  nextEscalationAt       DateTime?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  
+  resolution             Resolution?
+  timeline               DefectResolutionTimeline[]
+  comments               ResolutionComment[]
+  notifications          Notification[]
+  assignments            AlertAssignmentHistory[]
+  escalations            EscalationHistory[]
+
+  @@index([companyId])
+  @@index([status])
+  @@index([severity])
+  @@index([assignedToUserId])
+  @@index([assignedToRole])
+  @@index([nextEscalationAt])
+  @@map("alerts")
+}
+
+/// Tracks assignment changes
+model AlertAssignmentHistory {
+  id                   String   @id @default(uuid())
+  alertId              String
+  alert                Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  assignedByUserId     String
+  assignedByUser       User     @relation("AssignedByUser", fields: [assignedByUserId], references: [id])
+  assignedToUserId     String?
+  assignedToUser       User?    @relation("AssignedToUser", fields: [assignedToUserId], references: [id])
+  assignedToRole       UserRole?
+  assignedToDepartment String?
+  assignedToTeam       String?
+  notes                String?
+  assignedAt           DateTime @default(now())
+
+  @@index([alertId])
+  @@index([assignedAt])
+  @@map("alert_assignment_histories")
+}
+
+/// Tracks automatic escalations triggered by the engine
+model EscalationHistory {
+  id             String    @id @default(uuid())
+  alertId        String
+  alert          Alert     @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  steppedFromRole UserRole?
+  steppedToRole  UserRole
+  steppedToUserId String?
+  escalatedAt    DateTime  @default(now())
+  notes          String?
+
+  @@index([alertId])
+  @@map("escalation_histories")
+}
+
+/// Full Audit Trail Timeline for defect lifecycle
+model DefectResolutionTimeline {
+  id                 String    @id @default(uuid())
+  alertId            String
+  alert              Alert     @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  actionType         String    // e.g. "CREATED", "ASSIGNED", "NOTE_ADDED", "RESOLVED", "REOPENED", "ESCALATED"
+  performedByUserId  String?
+  performedByUser    User?     @relation(fields: [performedByUserId], references: [id])
+  performedByRole    UserRole?
+  details            String
+  createdAt          DateTime  @default(now())
+
+  @@index([alertId])
+  @@index([createdAt])
+  @@map("defect_resolution_timeline")
+}
+
+/// Stores resolution details (1-to-1 with Alert)
+model Resolution {
+  id               String   @id @default(uuid())
+  alertId          String   @unique
+  alert            Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  resolvedByUserId String
+  resolvedByUser   User     @relation(fields: [resolvedByUserId], references: [id])
+  resolvedAt       DateTime @default(now())
+  reason           String
+  notes            String?
+  audioPath        String?
+  transcription    String?
+  imageUrls        String[]
+  createdAt        DateTime @default(now())
+
+  @@index([resolvedByUserId])
+  @@map("resolutions")
+}
+
+/// Comments/notes added to the alert
+model ResolutionComment {
+  id            String   @id @default(uuid())
+  alertId       String
+  alert         Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  commentText   String
+  audioPath     String?
+  transcription String?
+  createdAt     DateTime @default(now())
+
+  @@index([alertId])
+  @@map("resolution_comments")
+}
+
+/// Centralized notification history table
+model Notification {
+  id          String              @id @default(uuid())
+  companyId   String
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertId     String?
+  alert       Alert?              @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  title       String
+  message     String
+  channel     NotificationChannel
+  isRead      Boolean             @default(false)
+  readAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  @@index([companyId])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+/// User's channel preferences
+model NotificationPreference {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+  updatedAt DateTime            @updatedAt
+
+  @@unique([userId, channel])
+  @@map("notification_preferences")
+}
