@@ -5,6 +5,8 @@ import { NotificationChannel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Processor('notifications')
 @Injectable()
@@ -20,7 +22,7 @@ export class NotificationsProcessor extends WorkerHost {
     }
 
     try {
-      // Render Environment Variable
+      // 1. Try environment variable (Production / Render)
       if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         const serviceAccount = JSON.parse(
           process.env.FIREBASE_SERVICE_ACCOUNT,
@@ -36,8 +38,20 @@ export class NotificationsProcessor extends WorkerHost {
         return;
       }
 
+      // 2. Try service account file path (Local development)
+      const rawPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './firebase-service-account.json';
+      const credPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
+
+      if (fs.existsSync(credPath)) {
+        initializeApp({
+          credential: cert(credPath),
+        });
+        console.log(`[Firebase Admin] Initialized successfully using file: ${credPath}`);
+        return;
+      }
+
       console.warn(
-        '[Firebase Admin] FIREBASE_SERVICE_ACCOUNT environment variable not found.',
+        `[Firebase Admin] Firebase config not found. Neither FIREBASE_SERVICE_ACCOUNT env var nor file at ${credPath} exists.`,
       );
     } catch (err) {
       console.error('[Firebase Admin] Initialization failed:', err);
@@ -57,7 +71,7 @@ export class NotificationsProcessor extends WorkerHost {
         break;
 
       case NotificationChannel.PUSH:
-        await this.sendPush(userId, title, message);
+        await this.sendPush(notificationId, userId, title, message);
         break;
 
       case NotificationChannel.SMS:
@@ -83,6 +97,7 @@ export class NotificationsProcessor extends WorkerHost {
   }
 
   private async sendPush(
+    notificationId: string,
     userId: string,
     title: string,
     message: string,
@@ -90,6 +105,31 @@ export class NotificationsProcessor extends WorkerHost {
     if (!userId) {
       console.log('No userId supplied.');
       return;
+    }
+
+    let severity = 'INFO';
+    let soundProfile = 'ALERT';
+    let alertId = '';
+
+    try {
+      const notification = await this.prisma.notification.findUnique({
+        where: { id: notificationId },
+        include: {
+          alert: {
+            include: {
+              defect: true,
+            },
+          },
+        },
+      });
+
+      if (notification?.alert) {
+        alertId = notification.alertId || '';
+        severity = notification.alert.severity || 'INFO';
+        soundProfile = notification.alert.defect?.soundProfile || 'ALERT';
+      }
+    } catch (dbErr) {
+      console.error('[sendPush] Error querying database for notification metadata:', dbErr);
     }
 
     const user = await this.prisma.user.findUnique({
@@ -110,15 +150,23 @@ export class NotificationsProcessor extends WorkerHost {
     }
 
     try {
+      // Send a high-priority data-only message so that onMessageReceived triggers
+      // and plays the custom sound even if the app is in the background or closed.
       const response = await getMessaging().send({
         token: user.fcmToken,
-        notification: {
+        data: {
+          alertId,
+          severity,
+          soundProfile,
           title,
-          body: message,
+          message,
+        },
+        android: {
+          priority: 'high',
         },
       });
 
-      console.log('Push notification sent:', response);
+      console.log('Push notification sent successfully:', response, { alertId, severity, soundProfile });
     } catch (error) {
       console.error('FCM Error:', error);
     }
