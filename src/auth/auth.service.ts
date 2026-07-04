@@ -33,7 +33,10 @@ export class AuthService {
     const email = loginDto.email?.trim().toLowerCase();
     const user = await this.prisma.user.findFirst({
       where: {
-        email: email,
+        email: {
+          equals: email,
+          mode: 'insensitive'
+        },
         ...(targetCompanyId ? { companyId: targetCompanyId } : {}),
       },
     });
@@ -117,7 +120,13 @@ export class AuthService {
 
     // Check duplicate user scoped to the company
     const existingUser = await this.prisma.user.findFirst({
-      where: { email: email, companyId: company.id },
+      where: {
+        email: {
+          equals: email,
+          mode: 'insensitive'
+        },
+        companyId: company.id
+      },
     });
     if (existingUser) {
       throw new ConflictException(`User with this email is already registered in this company`);
