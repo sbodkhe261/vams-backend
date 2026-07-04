@@ -16,8 +16,13 @@ export class AuthService {
     if (targetCompanyId) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetCompanyId);
       if (!isUuid) {
-        const company = await this.prisma.company.findUnique({
-          where: { name: targetCompanyId },
+        const company = await this.prisma.company.findFirst({
+          where: {
+            name: {
+              equals: targetCompanyId,
+              mode: 'insensitive'
+            }
+          },
         });
         if (company) {
           targetCompanyId = company.id;
@@ -25,9 +30,10 @@ export class AuthService {
       }
     }
 
+    const email = loginDto.email?.trim().toLowerCase();
     const user = await this.prisma.user.findFirst({
       where: {
-        email: loginDto.email,
+        email: email,
         ...(targetCompanyId ? { companyId: targetCompanyId } : {}),
       },
     });
@@ -57,7 +63,7 @@ export class AuthService {
   }
 
   async register(data: any) {
-    const email = data.email?.trim();
+    const email = data.email?.trim().toLowerCase();
     if (!email) {
       throw new Error('Email is required');
     }
@@ -78,8 +84,13 @@ export class AuthService {
     }
 
     if (!company) {
-      company = await this.prisma.company.findUnique({
-        where: { name: companyIdOrName },
+      company = await this.prisma.company.findFirst({
+        where: {
+          name: {
+            equals: companyIdOrName,
+            mode: 'insensitive'
+          }
+        },
       });
     }
 
@@ -106,7 +117,7 @@ export class AuthService {
 
     // Check duplicate user scoped to the company
     const existingUser = await this.prisma.user.findFirst({
-      where: { email, companyId: company.id },
+      where: { email: email, companyId: company.id },
     });
     if (existingUser) {
       throw new ConflictException(`User with this email is already registered in this company`);
@@ -136,7 +147,7 @@ export class AuthService {
     const user = await this.prisma.user.create({
       data: {
         name: data.name,
-        email: data.email,
+        email: email,
         passwordHash: data.password,
         role: resolvedRole as any,
         companyId: company.id,

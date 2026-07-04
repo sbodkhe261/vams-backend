@@ -6,8 +6,13 @@ export class CompaniesService {
   constructor(private prisma: PrismaService) {}
 
   async create(name: string) {
-    const existing = await this.prisma.company.findUnique({
-      where: { name },
+    const existing = await this.prisma.company.findFirst({
+      where: {
+        name: {
+          equals: name,
+          mode: 'insensitive'
+        }
+      },
     });
     if (existing) {
       throw new ConflictException('Company with this name/code is already registered');
@@ -60,8 +65,13 @@ export class CompaniesService {
     }
 
     if (!company) {
-      company = await this.prisma.company.findUnique({
-        where: { name: idOrName },
+      company = await this.prisma.company.findFirst({
+        where: {
+          name: {
+            equals: idOrName,
+            mode: 'insensitive'
+          }
+        },
       });
     }
 
@@ -86,8 +96,13 @@ export class CompaniesService {
         });
       } catch (err) {
         // Uniqueness race condition: check if it was created in the meantime
-        company = await this.prisma.company.findUnique({
-          where: { name: idOrName },
+        company = await this.prisma.company.findFirst({
+          where: {
+            name: {
+              equals: idOrName,
+              mode: 'insensitive'
+            }
+          },
         });
         if (!company) {
           throw err;
