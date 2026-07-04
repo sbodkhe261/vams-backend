@@ -1,6 +1,7 @@
 import { IsString, IsNotEmpty, IsEnum, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole, Severity } from '@prisma/client';
+import { Transform } from 'class-transformer';
 
 export class CreateDefectDto {
   @ApiProperty({ example: 'Brake System Fluid Leak', description: 'Name of the defect type' })
@@ -19,6 +20,7 @@ export class CreateDefectDto {
   severity: Severity;
 
   @ApiProperty({ enum: UserRole, example: 'QUALITY_INSPECTOR', required: false, description: 'Default role assigned to fix this defect' })
+  @Transform(({ value }) => value === 'MANAGER' ? UserRole.FACTORY_MANAGER : value)
   @IsEnum(UserRole)
   @IsOptional()
   defaultAssigneeRole?: UserRole;

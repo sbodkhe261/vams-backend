@@ -11,8 +11,25 @@ export class AuthService {
   ) {}
 
   async login(loginDto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: loginDto.email },
+    // Resolve company ID if company name is passed in companyId
+    let targetCompanyId = loginDto.companyId;
+    if (targetCompanyId) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetCompanyId);
+      if (!isUuid) {
+        const company = await this.prisma.company.findUnique({
+          where: { name: targetCompanyId },
+        });
+        if (company) {
+          targetCompanyId = company.id;
+        }
+      }
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: loginDto.email,
+        ...(targetCompanyId ? { companyId: targetCompanyId } : {}),
+      },
     });
 
     if (!user) {
@@ -43,13 +60,6 @@ export class AuthService {
     const email = data.email?.trim();
     if (!email) {
       throw new Error('Email is required');
-    }
-
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email },
-    });
-    if (existingUser) {
-      throw new ConflictException(`User with this email is already registered (Email: ${email}, Role: ${existingUser.role})`);
     }
 
     const companyIdOrName = data.companyId?.trim();
@@ -92,6 +102,14 @@ export class AuthService {
 
         return newComp;
       });
+    }
+
+    // Check duplicate user scoped to the company
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email, companyId: company.id },
+    });
+    if (existingUser) {
+      throw new ConflictException(`User with this email is already registered in this company`);
     }
 
     const validRoles = [

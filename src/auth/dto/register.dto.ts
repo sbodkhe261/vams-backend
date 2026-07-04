@@ -1,6 +1,7 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { Transform } from 'class-transformer';
 
 export class RegisterDto {
   @ApiProperty({ example: 'John Doe', description: 'The full name of the user' })
@@ -31,6 +32,7 @@ export class RegisterDto {
     required: false,
     default: 'WORKER',
   })
+  @Transform(({ value }) => value === 'MANAGER' ? UserRole.FACTORY_MANAGER : value)
   @IsEnum(UserRole)
   @IsOptional()
   role?: UserRole;

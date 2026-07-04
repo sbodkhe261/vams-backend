@@ -1,6 +1,7 @@
 import { IsString, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { Transform } from 'class-transformer';
 
 export class AssignAlertDto {
   @ApiProperty({ example: 'd50a29e4-bcde-4211-8fa1-71ca36df201a', required: false, description: 'ID of the user to assign the alert to' })
@@ -9,6 +10,7 @@ export class AssignAlertDto {
   assignedToUserId?: string;
 
   @ApiProperty({ enum: UserRole, example: 'WORKER', required: false, description: 'Role to assign the alert to' })
+  @Transform(({ value }) => value === 'MANAGER' ? UserRole.FACTORY_MANAGER : value)
   @IsEnum(UserRole)
   @IsOptional()
   assignedToRole?: UserRole;

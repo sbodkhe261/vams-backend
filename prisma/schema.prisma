@@ -44,7 +44,7 @@ model CompanySettings {
 /// Users table with multi-tenant company association and RBAC Roles
 model User {
   id                String                     @id @default(uuid())
-  email             String                     @unique
+  email             String
   passwordHash      String
   name              String
   role              UserRole
@@ -65,6 +65,7 @@ model User {
   activityLogs      UserActivityLog[]
   company           Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@unique([companyId, email])
   @@index([companyId])
   @@index([role])
   @@map("users")
