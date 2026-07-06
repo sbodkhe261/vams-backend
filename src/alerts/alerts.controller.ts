@@ -43,7 +43,7 @@ export class AlertsController {
   }
 
   @Patch(':id/assign')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantInterceptor)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reassign an alert to a specific worker, role, or team' })
@@ -57,7 +57,7 @@ export class AlertsController {
   }
 
   @Post(':id/resolve')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantInterceptor)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Resolve an active defect alert with notes, media uploads, or audio descriptions' })
@@ -71,7 +71,7 @@ export class AlertsController {
   }
 
   @Post(':id/reopen')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantInterceptor)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Reopen a previously resolved alert if defect is not fully fixed' })
