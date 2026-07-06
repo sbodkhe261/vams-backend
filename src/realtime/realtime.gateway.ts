@@ -53,10 +53,18 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   // Broadcaster methods
   broadcastToCompany(companyId: string, event: string, payload: any) {
-    this.server.to(`company_${companyId}`).emit(event, payload);
+    if (this.server) {
+      this.server.to(`company_${companyId}`).emit(event, payload);
+    } else {
+      console.warn(`WebSocket server not initialized. Skipping broadcast [${event}]`);
+    }
   }
 
   broadcastToRole(companyId: string, role: string, event: string, payload: any) {
-    this.server.to(`company_${companyId}_role_${role}`).emit(event, payload);
+    if (this.server) {
+      this.server.to(`company_${companyId}_role_${role}`).emit(event, payload);
+    } else {
+      console.warn(`WebSocket server not initialized. Skipping broadcast [${event}] to role room`);
+    }
   }
 }

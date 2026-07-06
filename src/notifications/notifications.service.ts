@@ -42,14 +42,18 @@ export class NotificationsService {
         },
       });
 
-      // Enqueue in BullMQ processor for background sending (Push, SMS, Email)
-      await this.notificationQueue.add('send_notification', {
-        notificationId: notification.id,
-        channel,
-        userId: data.userId,
-        title: data.title,
-        message: data.message,
-      });
+      try {
+        // Enqueue in BullMQ processor for background sending (Push, SMS, Email)
+        await this.notificationQueue.add('send_notification', {
+          notificationId: notification.id,
+          channel,
+          userId: data.userId,
+          title: data.title,
+          message: data.message,
+        });
+      } catch (queueError) {
+        console.error(`Failed to add notification to BullMQ queue:`, queueError);
+      }
     }
   }
 }

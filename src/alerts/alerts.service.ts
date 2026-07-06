@@ -282,7 +282,12 @@ export class AlertsService {
         },
       });
 
-      // 2. Write Resolution Record
+      // 2. Clear any existing resolution record first to prevent unique constraint violation
+      await tx.resolution.deleteMany({
+        where: { alertId },
+      });
+
+      // Write Resolution Record
       await tx.resolution.create({
         data: {
           alertId,
