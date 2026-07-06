@@ -46,7 +46,6 @@ export class AlertsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(TenantInterceptor)
   @ApiBearerAuth()
-  @Roles(UserRole.WORKER, UserRole.QUALITY_INSPECTOR, UserRole.SERVICE_ENGINEER, UserRole.SUPERVISOR, UserRole.FACTORY_MANAGER, UserRole.COMPANY_ADMIN)
   @ApiOperation({ summary: 'Reassign an alert to a specific worker, role, or team' })
   assign(
     @TenantId() companyId: string,
@@ -61,7 +60,6 @@ export class AlertsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(TenantInterceptor)
   @ApiBearerAuth()
-  @Roles(UserRole.WORKER, UserRole.QUALITY_INSPECTOR, UserRole.SERVICE_ENGINEER, UserRole.SUPERVISOR, UserRole.FACTORY_MANAGER, UserRole.COMPANY_ADMIN)
   @ApiOperation({ summary: 'Resolve an active defect alert with notes, media uploads, or audio descriptions' })
   resolve(
     @TenantId() companyId: string,
