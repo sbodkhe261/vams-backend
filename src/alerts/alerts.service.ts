@@ -21,6 +21,8 @@ export class AlertsService {
     companyId: string;
     vin: string;
     defectName: string;
+    assignedToUserId?: string;
+    assignedToRole?: UserRole;
   }) {
     console.log('[DEBUG Ingest] Incoming Payload:', payload);
     // 1. Validate company exists
@@ -59,7 +61,8 @@ export class AlertsService {
           defectId: defect.id,
           severity: defect.severity,
           status: AlertStatus.OPEN,
-          assignedToRole: defect.defaultAssigneeRole,
+          assignedToUserId: payload.assignedToUserId || null,
+          assignedToRole: payload.assignedToRole || defect.defaultAssigneeRole,
           nextEscalationAt,
         },
         include: { defect: true },
@@ -85,6 +88,7 @@ export class AlertsService {
       defectName: defect.name,
       severity: alert.severity,
       status: alert.status,
+      assignedToUserId: alert.assignedToUserId,
       assignedToRole: alert.assignedToRole,
       soundProfile: defect.soundProfile,
       createdAt: alert.createdAt,

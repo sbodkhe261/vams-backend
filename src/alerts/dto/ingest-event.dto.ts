@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 
 export class IngestEventDto {
   @ApiProperty({ example: 'voice-inspection', description: 'Source system of the event' })
@@ -26,4 +27,14 @@ export class IngestEventDto {
   @IsString()
   @IsNotEmpty()
   defectName: string;
+
+  @ApiProperty({ example: 'd50a29e4-bcde-4211-8fa1-71ca36df201a', required: false, description: 'ID of the user to assign the alert to' })
+  @IsString()
+  @IsOptional()
+  assignedToUserId?: string;
+
+  @ApiProperty({ enum: UserRole, example: 'WORKER', required: false, description: 'Role to assign the alert to' })
+  @IsEnum(UserRole)
+  @IsOptional()
+  assignedToRole?: UserRole;
 }
