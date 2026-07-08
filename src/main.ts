@@ -14,6 +14,13 @@ async function bootstrap() {
   // Set global API prefix
   app.setGlobalPrefix('api/v1');
 
+  // Configure secure CORS policies
+  app.enableCors({
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
   // Enforce global validation rules
   app.useGlobalPipes(
     new ValidationPipe({
