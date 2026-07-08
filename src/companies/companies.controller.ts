@@ -48,9 +48,17 @@ export class CompaniesController {
 
   @Get(':companyId/users')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.COMPANY_ADMIN)
-  @ApiOperation({ summary: 'Get all users in the company (Company Admin only)' })
-  findUsers(@Param('companyId') companyId: string) {
+  @UseInterceptors(TenantInterceptor)
+  @Roles(
+    UserRole.COMPANY_ADMIN,
+    UserRole.FACTORY_MANAGER,
+    UserRole.SUPERVISOR,
+    UserRole.WORKER,
+    UserRole.QUALITY_INSPECTOR,
+    UserRole.SERVICE_ENGINEER
+  )
+  @ApiOperation({ summary: 'Get all users in the company' })
+  findUsers(@TenantId() companyId: string) {
     return this.companiesService.findUsers(companyId);
   }
 }
