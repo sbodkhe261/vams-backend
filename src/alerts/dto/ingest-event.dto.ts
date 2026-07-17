@@ -1,6 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { UserRole, Severity } from '@prisma/client';
 
 export class IngestEventDto {
   @ApiProperty({ example: 'voice-inspection', description: 'Source system of the event' })
@@ -18,15 +18,30 @@ export class IngestEventDto {
   @IsNotEmpty()
   companyId: string;
 
-  @ApiProperty({ example: 'MALXW35848DJ29103', description: 'Vehicle Identification Number' })
+  @ApiProperty({ example: 'MALXW35848DJ29103', required: false, description: 'Vehicle Identification Number' })
   @IsString()
-  @IsNotEmpty()
-  vin: string;
+  @IsOptional()
+  vin?: string;
 
-  @ApiProperty({ example: 'Brake System Fluid Leak', description: 'Defect description matching catalog' })
+  @ApiProperty({ example: 'Brake System Fluid Leak', required: false, description: 'Defect description matching catalog' })
   @IsString()
-  @IsNotEmpty()
-  defectName: string;
+  @IsOptional()
+  defectName?: string;
+
+  @ApiProperty({ example: 'Urgent Announcement', required: false, description: 'Title of the broadcast' })
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @ApiProperty({ example: 'a56fbdbe-2bd4-4ad6-9380-602933e1f3ec', required: false, description: 'Reference ID to the definition rule template' })
+  @IsString()
+  @IsOptional()
+  alertDefinitionId?: string;
+
+  @ApiProperty({ example: 'Dispatched custom instruction', required: false, description: 'Custom dispatcher instructions' })
+  @IsString()
+  @IsOptional()
+  message?: string;
 
   @ApiProperty({ example: 'd50a29e4-bcde-4211-8fa1-71ca36df201a', required: false, description: 'ID of the user to assign the alert to' })
   @IsString()
@@ -37,4 +52,15 @@ export class IngestEventDto {
   @IsEnum(UserRole)
   @IsOptional()
   assignedToRole?: UserRole;
+
+  @ApiProperty({ enum: Severity, example: 'MEDIUM', required: false, description: 'Severity level override' })
+  @IsEnum(Severity)
+  @IsOptional()
+  severity?: Severity;
+
+  @ApiProperty({ example: ['user-uuid-1'], required: false, description: 'IDs of specific users to target for broadcast' })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  targetUserIds?: string[];
 }

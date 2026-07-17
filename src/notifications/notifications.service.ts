@@ -29,31 +29,34 @@ export class NotificationsService {
       return pref ? pref.enabled : true; // Default to true if not set
     });
 
-    for (const channel of activeChannels) {
-      // Create Database Record
-      const notification = await this.prisma.notification.create({
-        data: {
-          companyId: data.companyId,
-          userId: data.userId,
-          alertId: data.alertId,
-          title: data.title,
-          message: data.message,
-          channel,
-        },
-      });
-
-      try {
-        // Enqueue in BullMQ processor for background sending (Push, SMS, Email)
-        await this.notificationQueue.add('send_notification', {
-          notificationId: notification.id,
-          channel,
-          userId: data.userId,
-          title: data.title,
-          message: data.message,
+    await Promise.all(
+      activeChannels.map(async (channel) => {
+        // Create Database Record
+        const notification = await this.prisma.notification.create({
+          data: {
+            companyId: data.companyId,
+            userId: data.userId,
+            alertId: data.alertId && data.alertId !== 'BROADCAST' ? data.alertId : null,
+            title: data.title,
+            message: data.message,
+            channel,
+          },
         });
-      } catch (queueError) {
-        console.error(`Failed to add notification to BullMQ queue:`, queueError);
-      }
-    }
+
+        try {
+          // Enqueue in BullMQ processor for background sending (Push, SMS, Email)
+          await this.notificationQueue.add('send_notification', {
+            notificationId: notification.id,
+            channel,
+            userId: data.userId,
+            title: data.title,
+            message: data.message,
+            alertId: data.alertId || null,
+          });
+        } catch (queueError) {
+          console.error(`Failed to add notification to BullMQ queue:`, queueError);
+        }
+      })
+    );
   }
 }

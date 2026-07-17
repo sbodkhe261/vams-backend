@@ -15,14 +15,21 @@ export class AlertsService {
   /**
    * External Event Ingest (REST Webhook ingestion layer)
    */
-  async ingestEvent(payload: {
+    async ingestEvent(payload: {
     source: string;
     event_type: string;
     companyId: string;
-    vin: string;
-    defectName: string;
+    vin?: string;
+    defectName?: string;
+    alertDefinitionId?: string;
+    alertId?: string;
     assignedToUserId?: string;
     assignedToRole?: UserRole;
+    severity?: Severity;
+    title?: string;
+    message?: string;
+    loopCompleted?: boolean;
+    targetUserIds?: string[];
   }) {
     console.log('[DEBUG Ingest] Incoming Payload:', payload);
     // 1. Validate company exists
@@ -33,82 +40,362 @@ export class AlertsService {
       throw new NotFoundException('Company tenant not found');
     }
 
-    // 2. Fetch Defect Master mapping details to map severity/assignees
-    const allCompanyDefects = await this.prisma.defectMaster.findMany({
-      where: { companyId: payload.companyId }
-    });
-    console.log('[DEBUG Ingest] DATABASE_URL:', process.env.DATABASE_URL);
-    console.log('[DEBUG Ingest] All Defects for this Company:', allCompanyDefects);
+    // Handle Broadcast event type
+    if (payload.event_type === 'BROADCAST') {
+      const activeUsers = await this.prisma.user.findMany({
+        where: {
+          companyId: payload.companyId,
+          isActive: true,
+          ...(payload.targetUserIds && payload.targetUserIds.length > 0 && {
+            id: { in: payload.targetUserIds }
+          })
+        },
+      });
 
-    const defect = await this.prisma.defectMaster.findFirst({
+      this.realtime.broadcastToCompany(payload.companyId, 'BROADCAST_CREATED', {
+        title: payload.title || 'Company Broadcast',
+        message: payload.message || '',
+        targetUserIds: payload.targetUserIds || null,
+      });
+
+      (async () => {
+        try {
+          const crypto = require('crypto');
+          for (const u of activeUsers) {
+            await this.notifications.enqueueNotification({
+              companyId: payload.companyId,
+              userId: u.id,
+              alertId: 'BROADCAST',
+              title: payload.title || 'Company Broadcast',
+              message: payload.message || '',
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            });
+
+            await this.prisma.alertNotificationLog.create({
+              data: {
+                id: crypto.randomUUID(),
+                alertId: 'BROADCAST',
+                userId: u.id,
+                type: 'BROADCAST',
+                message: payload.message || '',
+              },
+            });
+          }
+        } catch (err) {
+          console.error('[Broadcast Webhook] Failed to enqueue notifications:', err);
+        }
+      })();
+
+      return { success: true };
+    }
+
+    // Handle Escalation event type
+    if (payload.event_type === 'ESCALATION') {
+      const alert = await this.prisma.alert.findUnique({
+        where: { id: payload.alertId },
+        include: { defect: true }
+      });
+      if (!alert) {
+        throw new NotFoundException('Alert not found for escalation');
+      }
+
+      const targetUserId = payload.assignedToUserId;
+      let targetUsers = [];
+      if (payload.loopCompleted) {
+        // Loop completed, notify all active users of the company (admin fallback)
+        targetUsers = await this.prisma.user.findMany({
+          where: { companyId: payload.companyId, isActive: true }
+        });
+      } else if (targetUserId) {
+        const u = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+        if (u) targetUsers.push(u);
+      }
+
+      // Trigger Real-time Socket.IO Broadcast to company dashboard so stats update
+      this.realtime.broadcastToCompany(payload.companyId, 'ALERT_UPDATED', {
+        id: alert.id,
+        vin: alert.vin,
+        defectName: alert.defectName,
+        severity: alert.severity,
+        status: alert.status,
+        assignedToUserId: targetUserId || null,
+        assignedToRole: targetUsers[0]?.role || null,
+        soundProfile: alert.defect?.soundProfile || 'CRITICAL',
+        createdAt: alert.createdAt,
+      });
+
+      // Enqueue Push Notifications for the targeted assignees
+      (async () => {
+        try {
+          const crypto = require('crypto');
+          for (const user of targetUsers) {
+            const isYou = user.id === targetUserId;
+            await this.notifications.enqueueNotification({
+              companyId: payload.companyId,
+              userId: user.id,
+              alertId: alert.id,
+              title: payload.loopCompleted ? `SLA FALLBACK ALERT: ${alert.defectName}` : `ESCALATED ALERT: ${alert.defectName}`,
+              message: payload.message || `Alert escalated to ${isYou ? 'you' : user.name}.`,
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            });
+
+            await this.prisma.alertNotificationLog.create({
+              data: {
+                id: crypto.randomUUID(),
+                alertId: alert.id,
+                userId: user.id,
+                type: 'ESCALATION',
+                message: payload.message || `Alert escalated to ${isYou ? 'you' : user.name}.`,
+              },
+            });
+          }
+        } catch (err) {
+          console.error('[Escalation Webhook] Failed to enqueue notifications:', err);
+        }
+      })();
+
+      return { success: true };
+    }
+
+    // Handle Reminder event type
+    if (payload.event_type === 'REMINDER') {
+      const alert = await this.prisma.alert.findUnique({
+        where: { id: payload.alertId },
+        include: { defect: true }
+      });
+      if (!alert) {
+        throw new NotFoundException('Alert not found for reminder');
+      }
+
+      const targetUserId = payload.assignedToUserId;
+      if (targetUserId) {
+        const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+        if (user) {
+          (async () => {
+            try {
+              const crypto = require('crypto');
+              await this.notifications.enqueueNotification({
+                companyId: payload.companyId,
+                userId: user.id,
+                alertId: alert.id,
+                title: `REMINDER ALERT: ${alert.defectName}`,
+                message: payload.message || `Reminder: Alert '${alert.defectName}' is still pending your response.`,
+                channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+              });
+
+              await this.prisma.alertNotificationLog.create({
+                data: {
+                  id: crypto.randomUUID(),
+                  alertId: alert.id,
+                  userId: user.id,
+                  type: 'REMINDER',
+                  message: payload.message || `Reminder: Alert '${alert.defectName}' is still pending your response.`,
+                },
+              });
+            } catch (err) {
+              console.error('[Reminder Webhook] Failed to enqueue notifications:', err);
+            }
+          })();
+        }
+      }
+
+      return { success: true };
+    }
+
+    if (!payload.defectName && payload.event_type !== 'BROADCAST') {
+      throw new BadRequestException('defectName is required for standard alert events');
+    }
+
+    // 2. Fetch or create Defect Master mapping details to map severity/assignees
+    let defect = await this.prisma.defectMaster.findFirst({
       where: { companyId: payload.companyId, name: payload.defectName, active: true },
     });
-    console.log('[DEBUG Ingest] Query Result for Defect:', defect);
+
+    const finalSeverity = payload.severity || (defect ? defect.severity : 'MEDIUM');
 
     if (!defect) {
-      throw new NotFoundException(`Defect '${payload.defectName}' is not defined in the Defect Master`);
+      // Auto-create defect master mapping if it does not exist
+      const crypto = require('crypto');
+      const newDefectId = crypto.randomUUID();
+      let soundProfileVal = 'MEDIUM';
+      if (finalSeverity === 'CRITICAL' || finalSeverity === 'EMERGENCY') {
+        soundProfileVal = 'CRITICAL';
+      } else if (finalSeverity === 'HIGH') {
+        soundProfileVal = 'ALERT';
+      }
+
+      defect = await this.prisma.defectMaster.create({
+        data: {
+          id: newDefectId,
+          name: payload.defectName,
+          category: 'Manual Dispatch',
+          severity: finalSeverity,
+          defaultAssigneeRole: payload.assignedToRole || 'WORKER',
+          ownerVisible: true,
+          soundProfile: soundProfileVal,
+          active: true,
+          companyId: payload.companyId,
+        },
+      });
     }
 
     // Calculate next escalation date based on severity rules
-    const nextEscalationAt = this.calculateNextEscalation(defect.severity);
+    const nextEscalationAt = this.calculateNextEscalation(finalSeverity);
 
-    // 3. Create Alert, Timeline and auto assignment
-    const alert = await this.prisma.$transaction(async (tx) => {
-      const newAlert = await tx.alert.create({
-        data: {
-          vin: payload.vin,
-          companyId: payload.companyId,
-          defectId: defect.id,
-          severity: defect.severity,
-          status: AlertStatus.OPEN,
-          assignedToUserId: payload.assignedToUserId || null,
-          assignedToRole: payload.assignedToRole || defect.defaultAssigneeRole,
-          nextEscalationAt,
-        },
+    // Determine active sound profile based on severity override
+    let activeSoundProfile = defect.soundProfile;
+    if (payload.source === 'admin-portal') {
+      activeSoundProfile = 'CRITICAL';
+    } else if (payload.severity) {
+      if (payload.severity === 'CRITICAL' || payload.severity === 'EMERGENCY') {
+        activeSoundProfile = 'CRITICAL';
+      } else if (payload.severity === 'HIGH') {
+        activeSoundProfile = 'ALERT';
+      } else {
+        activeSoundProfile = 'MEDIUM';
+      }
+    }
+
+    // Resolve Alert Definition details if provided
+    let criticalOverride = false;
+    if (payload.alertDefinitionId) {
+      const def = await this.prisma.alertDefinition.findUnique({
+        where: { id: payload.alertDefinitionId },
+      });
+      if (def) {
+        criticalOverride = def.criticalOverride;
+      }
+    }
+
+    // 3. Check if alert already exists, or create it, timeline and auto assignment
+    let alert = null;
+    if (payload.alertId) {
+      alert = await this.prisma.alert.findUnique({
+        where: { id: payload.alertId },
         include: { defect: true },
       });
+    }
 
-      // Log creation to defect audit timeline
-      await tx.defectResolutionTimeline.create({
-        data: {
-          alertId: newAlert.id,
-          actionType: 'CREATED',
-          performedByRole: UserRole.QUALITY_INSPECTOR,
-          details: `Defect created by source system: [${payload.source}]. Routed to default role: ${defect.defaultAssigneeRole}`,
-        },
+    if (!alert) {
+      alert = await this.prisma.$transaction(async (tx) => {
+        const newAlert = await tx.alert.create({
+          data: {
+            id: payload.alertId || undefined,
+            vin: payload.vin || null,
+            companyId: payload.companyId,
+            defectId: defect.id,
+            defectName: payload.defectName,
+            alertDefinitionId: payload.alertDefinitionId || null,
+            severity: finalSeverity,
+            status: AlertStatus.OPEN,
+            assignedToUserId: payload.assignedToUserId || null,
+            assignedToRole: payload.assignedToRole || defect.defaultAssigneeRole,
+            nextEscalationAt,
+            isManual: payload.source === 'admin-portal',
+          },
+          include: { defect: true },
+        });
+
+        // Create initial active AlertAssignment record
+        if (newAlert.assignedToUserId) {
+          await tx.alertAssignment.create({
+            data: {
+              alertId: newAlert.id,
+              severity: finalSeverity,
+              assignedToId: newAlert.assignedToUserId,
+              assignedAt: new Date(),
+              notifiedAt: new Date(),
+              seenAt: null,
+              reminderCount: 0,
+              escalationLevel: 0,
+              status: 'OPEN',
+            },
+          });
+        }
+
+        // Log creation to defect audit timeline
+        await tx.defectResolutionTimeline.create({
+          data: {
+            alertId: newAlert.id,
+            actionType: 'CREATED',
+            performedByRole: UserRole.QUALITY_INSPECTOR,
+            details: `Defect created by source system: [${payload.source}]. Routed to assignee: ${newAlert.assignedToUserId || newAlert.assignedToRole || 'Default'}.${payload.message ? ' Notes: ' + payload.message : ''}`,
+          },
+        });
+
+        return newAlert;
       });
-
-      return newAlert;
-    });
+    }
 
     // 4. Trigger Real-time Socket.IO Broadcast to company dashboard
     this.realtime.broadcastToCompany(payload.companyId, 'ALERT_CREATED', {
       id: alert.id,
       vin: alert.vin,
       defectName: defect.name,
-      severity: alert.severity,
+      severity: payload.source === 'admin-portal' ? 'CRITICAL' : alert.severity,
       status: alert.status,
       assignedToUserId: alert.assignedToUserId,
       assignedToRole: alert.assignedToRole,
-      soundProfile: defect.soundProfile,
+      soundProfile: activeSoundProfile,
       createdAt: alert.createdAt,
     });
 
-    // 5. Enqueue Push Notifications for all users in the company
-    const targetUsers = await this.prisma.user.findMany({
-      where: { companyId: payload.companyId, isActive: true },
-    });
+    // 5. Run enqueuing and notification queries asynchronously in the background
+    const finalAlert = alert;
+    const finalDefect = defect;
+    (async () => {
+      try {
+        // Resolve assignee name for clearer notifications
+        let assigneeName: string = finalAlert.assignedToRole || finalDefect.defaultAssigneeRole;
+        if (finalAlert.assignedToUserId) {
+          const assignedUser = await this.prisma.user.findUnique({
+            where: { id: finalAlert.assignedToUserId },
+          });
+          if (assignedUser) {
+            assigneeName = assignedUser.name;
+          }
+        }
 
-    for (const user of targetUsers) {
-      await this.notifications.enqueueNotification({
-        companyId: payload.companyId,
-        userId: user.id,
-        alertId: alert.id,
-        title: `CRITICAL ALERT: ${defect.name}`,
-        message: `New defect '${defect.name}' on VIN ${alert.vin} is assigned to ${defect.defaultAssigneeRole}.`,
-        channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
-      });
-    }
+        // Determine target users to notify
+        const targetUsers = (payload.source === 'admin-portal' || criticalOverride || finalSeverity === 'CRITICAL' || finalSeverity === 'EMERGENCY')
+          ? await this.prisma.user.findMany({ where: { companyId: payload.companyId, isActive: true } })
+          : await this.prisma.user.findMany({
+              where: {
+                companyId: payload.companyId,
+                isActive: true,
+                ...(finalAlert.assignedToUserId && { id: finalAlert.assignedToUserId }),
+                ...(finalAlert.assignedToRole && !finalAlert.assignedToUserId && { role: finalAlert.assignedToRole as any }),
+              },
+            });
+
+        const crypto = require('crypto');
+        await Promise.all(
+          targetUsers.map(async (user) => {
+            const isYou = user.id === finalAlert.assignedToUserId;
+            await this.notifications.enqueueNotification({
+              companyId: payload.companyId,
+              userId: user.id,
+              alertId: finalAlert.id,
+              title: `CRITICAL ALERT: ${finalDefect.name}`,
+              message: payload.message || `New defect '${finalDefect.name}' is assigned to ${isYou ? 'you' : assigneeName}.`,
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            });
+
+            await this.prisma.alertNotificationLog.create({
+              data: {
+                id: crypto.randomUUID(),
+                alertId: finalAlert.id,
+                userId: user.id,
+                type: 'NOTIFICATION',
+                message: `New defect '${finalDefect.name}' is assigned to ${isYou ? 'you' : assigneeName}.`,
+              },
+            });
+          })
+        );
+      } catch (err) {
+        console.error('[Ingest Sync] Background notification enqueuing failed:', err);
+      }
+    })();
 
     return alert;
   }
@@ -160,6 +447,42 @@ export class AlertsService {
         },
       });
 
+      // Deactivate current active assignments
+      await tx.alertAssignment.updateMany({
+        where: { alertId, status: 'OPEN' },
+        data: { status: 'SUPERSEDED' },
+      });
+
+      // Create new active assignment if assignedToUserId is defined
+      if (data.assignedToUserId) {
+        let nextEscalationLevel = 0;
+        if (alert.alertDefinitionId) {
+          const def = await tx.alertDefinition.findUnique({
+            where: { id: alert.alertDefinitionId },
+          });
+          if (def) {
+            const chainIndex = def.escalationChain.indexOf(data.assignedToUserId);
+            if (chainIndex !== -1) {
+              nextEscalationLevel = chainIndex + 1;
+            }
+          }
+        }
+
+        await tx.alertAssignment.create({
+          data: {
+            alertId,
+            severity: alert.severity,
+            assignedToId: data.assignedToUserId,
+            assignedAt: new Date(),
+            notifiedAt: new Date(),
+            seenAt: null,
+            reminderCount: 0,
+            escalationLevel: nextEscalationLevel,
+            status: 'OPEN',
+          },
+        });
+      }
+
       // Assignment history audit log
       await tx.alertAssignmentHistory.create({
         data: {
@@ -210,9 +533,9 @@ export class AlertsService {
     // Check if user is taking over the task (handover)
     if (performedByUserId === data.assignedToUserId) {
       title = 'Defect Task Handover';
-      message = `${user.name} (${user.role}) has taken over ${prevAssigneeDesc}'s defect task '${alert.defect.name}' on VIN ${alert.vin}.`;
+      message = `${user.name} (${user.role}) has taken over ${prevAssigneeDesc}'s defect task '${alert.defect ? alert.defect.name : 'Alert'}' on VIN ${alert.vin || 'N/A'}.`;
     } else {
-      message = `${user.name} (${user.role}) has assigned defect task '${alert.defect.name}' (VIN: ${alert.vin}) to ${newAssigneeDesc}.`;
+      message = `${user.name} (${user.role}) has assigned defect task '${alert.defect ? alert.defect.name : 'Alert'}' (VIN: ${alert.vin || 'N/A'}) to ${newAssigneeDesc}.`;
     }
 
     // Notify real-time dashboard
@@ -286,6 +609,12 @@ export class AlertsService {
         },
       });
 
+      // Update active AlertAssignment status to RESOLVED
+      await tx.alertAssignment.updateMany({
+        where: { alertId, status: 'OPEN' },
+        data: { status: 'RESOLVED' },
+      });
+
       // 2. Clear any existing resolution record first to prevent unique constraint violation
       await tx.resolution.deleteMany({
         where: { alertId },
@@ -339,9 +668,9 @@ export class AlertsService {
     const commentSuffix = data.reason ? ` Comment: "${data.reason}"` : '';
     let message = '';
     if (resolvedByUserId === alert.assignedToUserId) {
-      message = `${user.name} (${user.role}) has resolved their assigned defect task '${alert.defect.name}' on VIN ${alert.vin}.${commentSuffix}`;
+      message = `${user.name} (${user.role}) has resolved their assigned defect task '${alert.defect ? alert.defect.name : 'Alert'}' on VIN ${alert.vin || 'N/A'}.${commentSuffix}`;
     } else {
-      message = `${user.name} (${user.role}) has resolved ${assigneeDesc}'s defect task '${alert.defect.name}' on VIN ${alert.vin}.${commentSuffix}`;
+      message = `${user.name} (${user.role}) has resolved ${assigneeDesc}'s defect task '${alert.defect ? alert.defect.name : 'Alert'}' on VIN ${alert.vin || 'N/A'}.${commentSuffix}`;
     }
 
     // Enqueue notifications for all active users of the company
@@ -393,6 +722,29 @@ export class AlertsService {
         where: { alertId },
       });
 
+      // Deactivate current active assignments
+      await tx.alertAssignment.updateMany({
+        where: { alertId, status: 'OPEN' },
+        data: { status: 'SUPERSEDED' },
+      });
+
+      // Recreate assignment for target user
+      if (alert.assignedToUserId) {
+        await tx.alertAssignment.create({
+          data: {
+            alertId,
+            severity: alert.severity,
+            assignedToId: alert.assignedToUserId,
+            assignedAt: new Date(),
+            notifiedAt: new Date(),
+            seenAt: null,
+            reminderCount: 0,
+            escalationLevel: 0,
+            status: 'OPEN',
+          },
+        });
+      }
+
       // Log Timeline
       await tx.defectResolutionTimeline.create({
         data: {
@@ -424,7 +776,7 @@ export class AlertsService {
         userId: u.id,
         alertId: alertId,
         title: 'Defect Task Reopened',
-        message: `${user.name} (${user.role}) has reopened defect task '${alert.defect.name}' (VIN: ${alert.vin}). Reason: ${reason}`,
+        message: `${user.name} (${user.role}) has reopened defect task '${alert.defect ? alert.defect.name : 'Alert'}' (VIN: ${alert.vin || 'N/A'}). Reason: ${reason}`,
         channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
       });
     }
@@ -522,7 +874,7 @@ export class AlertsService {
   /**
    * Find a single alert detail with relations
    */
-  async findOneAlert(companyId: string, alertId: string) {
+  async findOneAlert(companyId: string, alertId: string, userId?: string) {
     const alert = await this.prisma.alert.findFirst({
       where: { id: alertId, companyId },
       include: {
@@ -598,6 +950,21 @@ export class AlertsService {
     if (!alert) {
       throw new NotFoundException('Alert not found');
     }
+
+    if (userId && alert.assignedToUserId === userId) {
+      await this.prisma.alertAssignment.updateMany({
+        where: {
+          alertId: alert.id,
+          assignedToId: userId,
+          seenAt: null,
+          status: 'OPEN',
+        },
+        data: {
+          seenAt: new Date(),
+        },
+      });
+    }
+
     return alert;
   }
 
@@ -676,6 +1043,91 @@ export class AlertsService {
       default:
         return new Date(now.getTime() + 72 * 60 * 60 * 1000); // 72 hours
     }
+  }
+
+  async takeoverAlert(companyId: string, alertId: string, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User profile not found');
+
+    const alert = await this.prisma.alert.findUnique({
+      where: { id: alertId, companyId },
+    });
+    if (!alert) throw new NotFoundException('Alert not found');
+
+    // 1. Deactivate current active assignments
+    await this.prisma.alertAssignment.updateMany({
+      where: { alertId, status: 'OPEN' },
+      data: { status: 'SUPERSEDED' },
+    });
+
+    // 2. Resolve index in original escalation chain
+    let nextEscalationLevel = 0;
+    if (alert.alertDefinitionId) {
+      const def = await this.prisma.alertDefinition.findUnique({
+        where: { id: alert.alertDefinitionId },
+      });
+      if (def) {
+        const chainIndex = def.escalationChain.indexOf(userId);
+        if (chainIndex !== -1) {
+          nextEscalationLevel = chainIndex + 1;
+        }
+      }
+    }
+
+    // 3. Create fresh assignment for takeover user, resetting clock and seenAt
+    await this.prisma.alertAssignment.create({
+      data: {
+        alertId,
+        severity: alert.severity,
+        assignedToId: userId,
+        assignedAt: new Date(),
+        notifiedAt: new Date(),
+        seenAt: null,
+        reminderCount: 0,
+        escalationLevel: nextEscalationLevel,
+        status: 'OPEN',
+      },
+    });
+
+    // 4. Update the Alert assignedToUserId
+    const updatedAlert = await this.prisma.alert.update({
+      where: { id: alertId },
+      data: {
+        assignedToUserId: userId,
+        assignedToRole: user.role,
+        status: AlertStatus.IN_PROGRESS,
+      },
+    });
+
+    // 5. Create History assignment and timeline log
+    await this.prisma.alertAssignmentHistory.create({
+      data: {
+        alertId,
+        assignedByUserId: userId,
+        assignedToUserId: userId,
+        assignedToRole: user.role,
+        notes: 'Alert taken over by user',
+      },
+    });
+
+    await this.prisma.defectResolutionTimeline.create({
+      data: {
+        alertId,
+        actionType: 'ASSIGNED',
+        performedByUserId: userId,
+        performedByRole: user.role,
+        details: `Alert taken over by ${user.name} (${user.role}). Escalation chain index set to ${nextEscalationLevel}.`,
+      },
+    });
+
+    // 6. Broadcast via Socket.IO
+    this.realtime.broadcastToCompany(companyId, 'ALERT_ASSIGNED', {
+      alertId,
+      assignedToUserId: userId,
+      assignedToName: user.name,
+    });
+
+    return updatedAlert;
   }
 }
 

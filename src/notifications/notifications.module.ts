@@ -11,7 +11,7 @@ import { NotificationsProcessor } from './notifications.processor';
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
         username: process.env.REDIS_USERNAME || 'default',
         password: process.env.REDIS_PASSWORD,
-        tls: {},
+        tls: process.env.REDIS_TLS === 'true' ? {} : undefined,
       },
     }),
     BullModule.registerQueue({

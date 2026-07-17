@@ -59,7 +59,7 @@ export class NotificationsProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
-    const { notificationId, channel, title, message, userId } = job.data;
+    const { notificationId, channel, title, message, userId, alertId } = job.data;
 
     console.log(
       `[BullMQ Worker] Processing notification ${notificationId} via ${channel}`,
@@ -71,7 +71,7 @@ export class NotificationsProcessor extends WorkerHost {
         break;
 
       case NotificationChannel.PUSH:
-        await this.sendPush(notificationId, userId, title, message);
+        await this.sendPush(notificationId, userId, title, message, alertId);
         break;
 
       case NotificationChannel.SMS:
@@ -101,6 +101,7 @@ export class NotificationsProcessor extends WorkerHost {
     userId: string,
     title: string,
     message: string,
+    jobAlertId?: string,
   ) {
     if (!userId) {
       console.log('No userId supplied.');
@@ -109,7 +110,7 @@ export class NotificationsProcessor extends WorkerHost {
 
     let severity = 'INFO';
     let soundProfile = 'ALERT';
-    let alertId = '';
+    let alertId = jobAlertId || '';
 
     try {
       const notification = await this.prisma.notification.findUnique({
@@ -124,12 +125,36 @@ export class NotificationsProcessor extends WorkerHost {
       });
 
       if (notification) {
-        alertId = notification.alertId || '';
+        alertId = notification.alertId || jobAlertId || '';
         const titleUpper = notification.title.toUpperCase();
         
         if (notification.alert) {
-          severity = notification.alert.severity || 'INFO';
-          soundProfile = notification.alert.defect?.soundProfile || 'ALERT';
+          severity = notification.alert.isManual ? 'CRITICAL' : (notification.alert.severity || 'INFO');
+          soundProfile = notification.alert.isManual ? 'CRITICAL' : (notification.alert.defect?.soundProfile || 'ALERT');
+        } else {
+          if (alertId === 'BROADCAST') {
+            severity = 'HIGH';
+            soundProfile = 'ALERT';
+          } else {
+            // Fallback keyword detection for BROADCAST, ESCALATION, REMINDER titles
+            if (
+              titleUpper.includes('CRITICAL') ||
+              titleUpper.includes('EMERGENCY') ||
+              titleUpper.includes('FALLBACK') ||
+              titleUpper.includes('FIRE') ||
+              titleUpper.includes('SAFETY')
+            ) {
+              severity = 'CRITICAL';
+              soundProfile = 'CRITICAL';
+            } else if (
+              titleUpper.includes('ESCALAT') ||
+              titleUpper.includes('REMINDER') ||
+              titleUpper.includes('HIGH')
+            ) {
+              severity = 'HIGH';
+              soundProfile = 'ALERT';
+            }
+          }
         }
       }
     } catch (dbErr) {

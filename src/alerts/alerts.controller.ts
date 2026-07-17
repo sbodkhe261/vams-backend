@@ -56,6 +56,19 @@ export class AlertsController {
     return this.alertsService.assignAlert(companyId, alertId, req.user.id, data);
   }
 
+  @Post(':id/takeover')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(TenantInterceptor)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Take over an active defect alert' })
+  takeover(
+    @TenantId() companyId: string,
+    @Param('id') alertId: string,
+    @Request() req: any,
+  ) {
+    return this.alertsService.takeoverAlert(companyId, alertId, req.user.id);
+  }
+
   @Post(':id/resolve')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantInterceptor)
@@ -125,8 +138,9 @@ export class AlertsController {
   findOneAlert(
     @TenantId() companyId: string,
     @Param('id') id: string,
+    @Request() req: any,
   ) {
-    return this.alertsService.findOneAlert(companyId, id);
+    return this.alertsService.findOneAlert(companyId, id, req.user.id);
   }
 
   @Post(':id/comments')
