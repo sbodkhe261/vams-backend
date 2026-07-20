@@ -61,26 +61,28 @@ export class AlertsService {
       (async () => {
         try {
           const crypto = require('crypto');
-          for (const u of activeUsers) {
-            await this.notifications.enqueueNotification({
-              companyId: payload.companyId,
-              userId: u.id,
-              alertId: 'BROADCAST',
-              title: payload.title || 'Company Broadcast',
-              message: payload.message || '',
-              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
-            });
-
-            await this.prisma.alertNotificationLog.create({
-              data: {
-                id: crypto.randomUUID(),
-                alertId: 'BROADCAST',
+          await Promise.all(
+            activeUsers.map(async (u) => {
+              await this.notifications.enqueueNotification({
+                companyId: payload.companyId,
                 userId: u.id,
-                type: 'BROADCAST',
+                alertId: 'BROADCAST',
+                title: payload.title || 'Company Broadcast',
                 message: payload.message || '',
-              },
-            });
-          }
+                channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+              });
+
+              await this.prisma.alertNotificationLog.create({
+                data: {
+                  id: crypto.randomUUID(),
+                  alertId: 'BROADCAST',
+                  userId: u.id,
+                  type: 'BROADCAST',
+                  message: payload.message || '',
+                },
+              });
+            })
+          );
         } catch (err) {
           console.error('[Broadcast Webhook] Failed to enqueue notifications:', err);
         }
@@ -547,21 +549,28 @@ export class AlertsService {
       message,
     });
 
-    // Enqueue notifications for all active users of the company
-    const activeUsers = await this.prisma.user.findMany({
-      where: { companyId, isActive: true },
-    });
-
-    for (const u of activeUsers) {
-      await this.notifications.enqueueNotification({
-        companyId,
-        userId: u.id,
-        alertId: alertId,
-        title,
-        message,
-        channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
-      });
-    }
+    // Enqueue notifications for all active users of the company in background
+    (async () => {
+      try {
+        const activeUsers = await this.prisma.user.findMany({
+          where: { companyId, isActive: true },
+        });
+        await Promise.all(
+          activeUsers.map((u) =>
+            this.notifications.enqueueNotification({
+              companyId,
+              userId: u.id,
+              alertId: alertId,
+              title,
+              message,
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            }),
+          ),
+        );
+      } catch (err) {
+        console.error('[reassignAlert] Error enqueueing notifications:', err);
+      }
+    })();
 
     return updatedAlert;
   }
@@ -673,21 +682,28 @@ export class AlertsService {
       message = `${user.name} (${user.role}) has resolved ${assigneeDesc}'s defect task '${alert.defect ? alert.defect.name : 'Alert'}' on VIN ${alert.vin || 'N/A'}.${commentSuffix}`;
     }
 
-    // Enqueue notifications for all active users of the company
-    const activeUsers = await this.prisma.user.findMany({
-      where: { companyId, isActive: true },
-    });
-
-    for (const u of activeUsers) {
-      await this.notifications.enqueueNotification({
-        companyId,
-        userId: u.id,
-        alertId: alertId,
-        title,
-        message,
-        channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
-      });
-    }
+    // Enqueue notifications for all active users of the company in background
+    (async () => {
+      try {
+        const activeUsers = await this.prisma.user.findMany({
+          where: { companyId, isActive: true },
+        });
+        await Promise.all(
+          activeUsers.map((u) =>
+            this.notifications.enqueueNotification({
+              companyId,
+              userId: u.id,
+              alertId: alertId,
+              title,
+              message,
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            }),
+          ),
+        );
+      } catch (err) {
+        console.error('[resolveAlert] Error enqueueing notifications:', err);
+      }
+    })();
 
     return this.findOneAlert(companyId, alertId);
   }
@@ -765,21 +781,28 @@ export class AlertsService {
       reopenedBy: user.name,
     });
 
-    // Enqueue notifications for all active users of the company
-    const activeUsers = await this.prisma.user.findMany({
-      where: { companyId, isActive: true },
-    });
-
-    for (const u of activeUsers) {
-      await this.notifications.enqueueNotification({
-        companyId,
-        userId: u.id,
-        alertId: alertId,
-        title: 'Defect Task Reopened',
-        message: `${user.name} (${user.role}) has reopened defect task '${alert.defect ? alert.defect.name : 'Alert'}' (VIN: ${alert.vin || 'N/A'}). Reason: ${reason}`,
-        channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
-      });
-    }
+    // Enqueue notifications for all active users of the company in background
+    (async () => {
+      try {
+        const activeUsers = await this.prisma.user.findMany({
+          where: { companyId, isActive: true },
+        });
+        await Promise.all(
+          activeUsers.map((u) =>
+            this.notifications.enqueueNotification({
+              companyId,
+              userId: u.id,
+              alertId: alertId,
+              title: 'Defect Task Reopened',
+              message: `${user.name} (${user.role}) has reopened defect task '${alert.defect ? alert.defect.name : 'Alert'}' (VIN: ${alert.vin || 'N/A'}). Reason: ${reason}`,
+              channels: [NotificationChannel.PUSH, NotificationChannel.IN_APP],
+            }),
+          ),
+        );
+      } catch (err) {
+        console.error('[reopenAlert] Error enqueueing notifications:', err);
+      }
+    })();
 
     return this.findOneAlert(companyId, alertId);
   }
@@ -787,37 +810,69 @@ export class AlertsService {
   /**
    * Get dynamic telemetry dashboard numbers
    */
+  /**
+   * Get dynamic telemetry dashboard numbers
+   */
   async getDashboardTelemetry(companyId: string) {
-    const alerts = await this.prisma.alert.findMany({
-      where: { 
-        companyId,
-        defect: { active: true },
-      },
-      include: { defect: true },
-    });
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
 
-    const openAlerts = alerts.filter(a => a.status !== AlertStatus.RESOLVED);
-    const criticalAlerts = openAlerts.filter(a => a.severity === Severity.CRITICAL || a.severity === Severity.EMERGENCY);
-    const resolvedToday = alerts.filter(
-      a => a.status === AlertStatus.RESOLVED && new Date(a.updatedAt).toDateString() === new Date().toDateString(),
-    );
+    const [openAlertsCount, criticalAlertsCount, resolvedTodayCount, openAlerts] = await Promise.all([
+      this.prisma.alert.count({
+        where: {
+          companyId,
+          defect: { active: true },
+          status: { not: AlertStatus.RESOLVED },
+        },
+      }),
+      this.prisma.alert.count({
+        where: {
+          companyId,
+          defect: { active: true },
+          status: { not: AlertStatus.RESOLVED },
+          severity: { in: [Severity.CRITICAL, Severity.EMERGENCY] },
+        },
+      }),
+      this.prisma.alert.count({
+        where: {
+          companyId,
+          defect: { active: true },
+          status: AlertStatus.RESOLVED,
+          updatedAt: { gte: todayStart },
+        },
+      }),
+      this.prisma.alert.findMany({
+        where: {
+          companyId,
+          defect: { active: true },
+          status: { not: AlertStatus.RESOLVED },
+        },
+        select: {
+          severity: true,
+          defect: {
+            select: {
+              category: true,
+            },
+          },
+        },
+      }),
+    ]);
 
-    // Grouping calculations
     const severityCount = openAlerts.reduce((acc, curr) => {
       acc[curr.severity] = (acc[curr.severity] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     const categoryCount = openAlerts.reduce((acc, curr) => {
-      const cat = curr.defect.category;
+      const cat = curr.defect?.category || 'General';
       acc[cat] = (acc[cat] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
     return {
-      openAlertsCount: openAlerts.length,
-      criticalAlertsCount: criticalAlerts.length,
-      resolvedTodayCount: resolvedToday.length,
+      openAlertsCount,
+      criticalAlertsCount,
+      resolvedTodayCount,
       alertsBySeverity: severityCount,
       alertsByCategory: categoryCount,
     };
@@ -952,7 +1007,7 @@ export class AlertsService {
     }
 
     if (userId && alert.assignedToUserId === userId) {
-      await this.prisma.alertAssignment.updateMany({
+      this.prisma.alertAssignment.updateMany({
         where: {
           alertId: alert.id,
           assignedToId: userId,
@@ -962,6 +1017,8 @@ export class AlertsService {
         data: {
           seenAt: new Date(),
         },
+      }).catch((err) => {
+        console.warn(`[findOneAlert] Failed to update seenAt timestamp:`, err.message);
       });
     }
 

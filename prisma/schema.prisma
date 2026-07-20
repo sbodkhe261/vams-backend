@@ -111,6 +111,7 @@ model DefectMaster {
 
   @@unique([companyId, name])
   @@index([companyId])
+  @@index([companyId, active])
   @@map("defect_masters")
 }
 
@@ -186,6 +187,7 @@ model Alert {
   @@index([assignedToUserId])
   @@index([assignedToRole])
   @@index([nextEscalationAt])
+  @@index([companyId, status])
   @@map("alerts")
 }
 
@@ -383,6 +385,10 @@ model AlertAssignment {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  @@index([alertId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([alertId, assignedToId, status])
   @@map("alert_assignments")
 }
 
@@ -394,6 +400,8 @@ model AlertNotificationLog {
   message   String
   createdAt DateTime @default(now())
 
+  @@index([alertId])
+  @@index([userId])
   @@map("alert_notification_logs")
 }
 
@@ -405,5 +413,6 @@ model CompanyBroadcastLog {
   sentById  String
   createdAt DateTime @default(now())
 
+  @@index([companyId])
   @@map("company_broadcast_logs")
 }

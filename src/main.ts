@@ -14,6 +14,16 @@ async function bootstrap() {
   // Set global API prefix
   app.setGlobalPrefix('api/v1');
 
+  // Security headers middleware for HSTS, XSS, Frame Options, and Sniffing protection
+  app.use((req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
   // Configure secure CORS policies
   app.enableCors({
     origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : true,

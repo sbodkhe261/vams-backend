@@ -132,9 +132,9 @@ export class NotificationsProcessor extends WorkerHost {
           severity = notification.alert.isManual ? 'CRITICAL' : (notification.alert.severity || 'INFO');
           soundProfile = notification.alert.isManual ? 'CRITICAL' : (notification.alert.defect?.soundProfile || 'ALERT');
         } else {
-          if (alertId === 'BROADCAST') {
-            severity = 'HIGH';
-            soundProfile = 'ALERT';
+          if (alertId === 'BROADCAST' || titleUpper.includes('BROADCAST')) {
+            severity = 'CRITICAL';
+            soundProfile = 'CRITICAL';
           } else {
             // Fallback keyword detection for BROADCAST, ESCALATION, REMINDER titles
             if (

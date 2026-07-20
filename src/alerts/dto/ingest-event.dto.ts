@@ -58,9 +58,18 @@ export class IngestEventDto {
   @IsOptional()
   severity?: Severity;
 
+  @ApiProperty({ example: 'a56fbdbe-2bd4-4ad6-9380-602933e1f3ec', required: false, description: 'Reference ID to the created alert record' })
+  @IsString()
+  @IsOptional()
+  alertId?: string;
+
   @ApiProperty({ example: ['user-uuid-1'], required: false, description: 'IDs of specific users to target for broadcast' })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   targetUserIds?: string[];
+
+  @ApiProperty({ example: true, required: false, description: 'Flag indicating whether SLA escalation loop has completed' })
+  @IsOptional()
+  loopCompleted?: boolean;
 }
